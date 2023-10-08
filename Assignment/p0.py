@@ -42,6 +42,7 @@ def main():
     os.environ['MASTER_ADDR'] = 'ip-172-31-45-10.us-east-2.compute.internal'
     os.environ['MASTER_PORT'] = '6006'
 
+
     # Spawns one or many processes untied to the first Python process that runs on the file.
     # This is to get around Python's GIL that prevents parallelism within independent threads.
     mp.spawn(train, nprocs=args.num_proc, args=(args,))
@@ -193,10 +194,15 @@ def train(proc_num, args):
     rank = args.nr * args.num_proc + proc_num
 
     # Task 2: Initialize distributed process group with following parameters,
-    backend = 'gloo'
-    init_method = 'env://'
-    world_size = args.world_size
-    rank = rank
+    # backend = 'gloo'
+    # init_method = 'env://'
+    # world_size = args.world_size
+    # rank = rank
+    dist.init_process_group(
+        backend='gloo',
+        rank=rank,
+        init_method='env://',
+        world_size=args.world_size)
 
     model = create_model()
     train_loader, val_loader = load_datasets(batch_size=args.batch_size, world_size=args.world_size, rank=rank)
