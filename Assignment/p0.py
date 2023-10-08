@@ -15,7 +15,7 @@ from torchvision.utils import make_grid
 from torch.utils.data.dataloader import DataLoader
 from torch.utils.data import random_split
 from torch.utils.tensorboard import SummaryWriter
-
+from torch.nn.parallel import DistributedDataParallel as DDP
 
 # For deterministic runs
 torch.manual_seed(0)
@@ -39,8 +39,8 @@ def main():
     print(args)
 
     # Task 2: Assign IP address and port for master process, i.e. process with rank=0
-    #os.environ['MASTER_ADDR'] = ''
-    #os.environ['MASTER_PORT'] = ''
+    os.environ['MASTER_ADDR'] = 'ip-172-31-45-10.us-east-2.compute.internal'
+    os.environ['MASTER_PORT'] = '6006'
 
     # Spawns one or many processes untied to the first Python process that runs on the file.
     # This is to get around Python's GIL that prevents parallelism within independent threads.
@@ -48,7 +48,7 @@ def main():
 
 def load_datasets(batch_size, world_size, rank):
   # Task 1: Choose an appropriate directory to download the datasets into
-  root_dir = None
+  root_dir = "../Data"
 
   extra_dataset = SVHN(root=root_dir, split='extra', download=True, transform=ToTensor())
   train_dataset = SVHN(root=root_dir, split='train', download=True, transform=ToTensor())
@@ -61,13 +61,15 @@ def load_datasets(batch_size, world_size, rank):
   # Task 2: modify train loader to work with multiple processes
   # 1. Generate a DistributedSample instance with num_replicas = world_size
   #    and rank=rank.
+  sampler = DistributedSampler(dataset, num_replicas = world_size, rank=rank)
   # 2. Set train_loader's sampler to the distributed sampler
-
+    
   train_loader = torch.utils.data.DataLoader(dataset=dataset,   
                                              batch_size=batch_size,
                                              shuffle=False,
                                              num_workers=0,
-                                             pin_memory=True)
+                                             pin_memory=True,
+                                             sampler=sampler)
   val_loader = DataLoader(val_ds, batch_size*2, num_workers=4, pin_memory=True)
   
   return train_loader, val_loader
@@ -117,12 +119,13 @@ def create_model():
 
   # Task 2: Wrap the model in DistributedDataParallel to 
   # make the model train in a distributed fashion.
+  ddp_model = DDP(model)
 
   # Printing sizes of model parameters
   for t in model.parameters():
       print(t.shape)
 
-  return model
+  return ddp_model
 
 def eval_step(model, batch):
     images, labels = batch
@@ -139,7 +142,14 @@ def calc_stats(outputs):
     return {'val_loss': epoch_loss.item(), 'val_acc': epoch_acc.item()}
 
 def evaluate(model, val_loader):
-    outputs = [eval_step(model, batch) for batch in val_loader]
+    batch_num = 0
+    outputs = []
+    for batch in val_loader:
+        batch_num += 1
+        if batch_num == 2:
+            break
+        outputs.append(eval_step(model, batch)) 
+    # outputs = [eval_step(model, batch) for batch in val_loader]
     return calc_stats(outputs)
 
 def epoch_report(epoch, result):
@@ -150,14 +160,25 @@ def run_epochs(epochs, lr, model, train_loader, val_loader, rank, opt_func=torch
     optimizer = opt_func(model.parameters(), lr)
     for epoch in range(epochs):
         # Training Phase 
+        batch_num = 0
         for batch in train_loader:
-            images, labels = batch 
+            batch_num += 1
+            print(batch_num)
+            if batch_num == 2:
+                break
+            images, labels = batch
             # Task 1: Complete training loop
             # Step 1 Get model prediction, i.e. run the fwd pass
+            outputs = model(images)
             # Step 2 Calculate cross entropy loss between out and labels
+            criterion = nn.CrossEntropyLoss()
+            loss = criterion(outputs, labels)
             # Step 3 Reset the gradients to zero
+            optimizer.zero_grad()
             # Step 4 Run the backward pass
+            loss.backward()
             # Step 5 Apply gradients using optimizer
+            optimizer.step()
         # Validation phase
         result = evaluate(model, val_loader)
         epoch_report(epoch, result)
@@ -172,10 +193,10 @@ def train(proc_num, args):
     rank = args.nr * args.num_proc + proc_num
 
     # Task 2: Initialize distributed process group with following parameters,
-    #  backend = 'gloo'
-    #  init_method = 'env://'
-    #  world_size = args.world_size
-    #  rank = rank
+    backend = 'gloo'
+    init_method = 'env://'
+    world_size = args.world_size
+    rank = rank
 
     model = create_model()
     train_loader, val_loader = load_datasets(batch_size=args.batch_size, world_size=args.world_size, rank=rank)
