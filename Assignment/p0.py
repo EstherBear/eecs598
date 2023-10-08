@@ -166,8 +166,6 @@ def run_epochs(epochs, lr, model, train_loader, val_loader, rank, opt_func=torch
         for batch in train_loader:
             batch_num += 1
             print(batch_num)
-            if batch_num == 2:
-                break
             images, labels = batch
             # Task 1: Complete training loop
             # Step 1 Get model prediction, i.e. run the fwd pass
