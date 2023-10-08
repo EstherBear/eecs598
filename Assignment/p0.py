@@ -16,6 +16,7 @@ from torch.utils.data.dataloader import DataLoader
 from torch.utils.data import random_split
 from torch.utils.tensorboard import SummaryWriter
 from torch.nn.parallel import DistributedDataParallel as DDP
+from torch.utils.data.distributed import DistributedSampler
 
 # For deterministic runs
 torch.manual_seed(0)
